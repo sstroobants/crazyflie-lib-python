@@ -73,6 +73,9 @@ def run_sequence(cf):
     commander = cf.high_level_commander
     deactivate_snn_controller(cf)
     t_start = time.time()
+
+    set_snn_type(cf)
+
     commander.takeoff(z, 2.0)
     time.sleep(2.5)
     commander.go_to(x, y, z, yaw, 1)

@@ -46,17 +46,6 @@ from cflib.utils import uri_helper
 # URI to the Crazyflie to connect to
 uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E700')
 
-# The host name or ip address of the mocap system
-host_name = '192.168.209.81'
-
-
-# The type of the mocap system
-# Valid options are: 'vicon', 'optitrack', 'optitrack_closed_source', 'qualisys', 'nokov', 'vrpn', 'motionanalysis'
-mocap_system_type = 'optitrack'
-
-# The name of the rigid body that represents the Crazyflie
-rigid_body_name = 'FlapperBody'
-
 # True: send position and orientation; False: send position only
 send_full_pose = True
 
@@ -64,11 +53,6 @@ send_full_pose = True
 # degrees. If this is a problem, increase orientation_std_dev a bit. The default value in the firmware is 4.5e-3.
 orientation_std_dev = 4.5e-3
 
-# The trajectory to fly
-# See https://github.com/whoenig/uav_trajectories for a tool to generate
-# trajectories
-
-snn_control = False
 
 # battery variables
 batt_level = 0
@@ -80,39 +64,6 @@ t_start = 0
 
 class ConnectionLostError(Exception):
     pass
-
-class MocapWrapper(Thread):
-    def __init__(self, body_name):
-        Thread.__init__(self)
-
-        self.body_name = body_name
-        self.on_pose = None
-        self._stay_open = True
-
-        self.start()
-
-    def close(self):
-        self._stay_open = False
-
-    def run(self):
-        print("Connecting to mocap system")
-        mc = motioncapture.connect(mocap_system_type, {'hostname': host_name})
-        print("Connecting to optitrack successful")
-        while self._stay_open:
-            mc.waitForNextFrame()
-            for name, obj in mc.rigidBodies.items():
-                if name == self.body_name:
-                    # print(self.on_pose)
-                    if self.on_pose:
-                        pos = obj.position
-
-                        # print(f"Position: ({-pos[1]}, {pos[0]}, {pos[2]})")     
-                        # rotation = {"w": obj.rotation.w, "x": -obj.rotation.y, "y": obj.rotation.x, "z": obj.rotation.z}
-                        # rotation = [obj.rotation.w, obj.rotation.y, -obj.rotation.x, obj.rotation.z]
-                        # 0 = y, 1 = -x, 2 = z
-                        self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
-            # print(3)
-
 
 def wait_for_position_estimator(scf):
     print('Waiting for estimator to find position...')
@@ -154,20 +105,6 @@ def wait_for_position_estimator(scf):
                     max_z - min_z) < threshold:
                 break
 
-
-def send_extpose_quat(cf, x, y, z, quat):
-    """
-    Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
-    This is going to be forwarded to the Crazyflie's position estimator.
-    """
-    if send_full_pose:
-        cf.extpos.send_extpose(z, x, y, quat.z, quat.x, quat.y, quat.w)
-        # cf.extpos.send_extpose(-y, x, z, -quat.y, quat.x, quat.z, quat.w)
-    else:
-        cf.extpos.send_extpos(z, x, y)
-        # print(-y, x, z)
-        # cf.extpos.send_extpos(-y, x, z)
-
 def reset_estimator(cf):
     cf.param.set_value('kalman.resetEstimation', '1')
     time.sleep(0.1)
@@ -186,18 +123,6 @@ def activate_kalman_estimator(cf):
     # Set the std deviation for the quaternion data pushed into the
     # kalman filter. The default value seems to be a bit too low.
     cf.param.set_value('locSrv.extQuatStdDev', 0.06)
-
-def activate_snn_controller(cf):
-    cf.param.set_value('pid_rate.snnEn', '1')
-
-def deactivate_snn_controller(cf):
-    cf.param.set_value('pid_rate.snnEn', '0')
-
-def set_snn_type(cf):
-    cf.param.set_value('pid_rate.snnType', '4')
-
-def set_snn_I_gain(cf, gain):
-    cf.param.set_value('pid_rate.snnIGain', str(gain))
 
 def start_onboard_logging(cf):
     cf.param.set_value("usd.logging", "1")
@@ -247,44 +172,45 @@ def run_sequence(cf):
     global batt_level, batt_state, t_start
 
     # Starting position
-    x = 0
-    y = 0
-    z = 0.8
+    x = 2
+    y = -2
+    z = 0.7
     yaw = 0
 
     commander = cf.high_level_commander
-    # deactivate_snn_controller(cf)
-    start_onboard_logging(cf)
     t_start = time.time()
     cf.platform.send_arming_request(True)
     # set_snn_type(cf)
-    time.sleep(0.1)
-    commander.takeoff(z, 2.0)
-    time.sleep(3.0)
-    # activate_snn_controller(cf)
+    time.sleep(1.0)
+    commander.takeoff(z, 1.0)
+    time.sleep(5.0)
     commander.go_to(x, y, z, yaw, 1)
-    time.sleep(2.0)
-    commander.go_to(x, y, z, yaw + 180, 4)
-    time.sleep(6.0)
-    commander.go_to(x, y, z, yaw, 4)
-    time.sleep(6.0)
-    commander.go_to(x, y, z, yaw + 180, 4)
-    time.sleep(6.0)
-    commander.go_to(x, y, z, yaw, 4)
-    time.sleep(6.0)
+    time.sleep(3.0)
     # print("Moving to x=1")
-    # commander.go_to(x + 1, y, z, yaw, 1)
-    # time.sleep(4)
+    commander.go_to(x + 3, y, z, yaw, 10)
+    time.sleep(10.5)
+
+    commander.go_to(x + 3, y, z, yaw + 3.14, 1)
+    time.sleep(1.2)
+
+    commander.go_to(x, y, z, yaw + 3.14, 10)
+    time.sleep(10.5)
+
+    commander.go_to(x, y, z, yaw, 1)
+    time.sleep(1.2)
     
 
     print("Landing")
-    # time.sleep(0.2)
-    # commander.go_to(x, y, z, yaw, 3)
-    # time.sleep(3)
-    commander.land(0.0, 2.0)
-    time.sleep(4)
-    stop_onboard_logging(cf)
+    time.sleep(0.2)
+    commander.go_to(x, y, 0.05, yaw, 1.2)
+    time.sleep(1.8)
+    commander.land(0.0, 0.5)
+    time.sleep(1.5)
+    cf.platform.send_arming_request(False)
     commander.stop()
+
+def _console_incoming(console_text):
+    print(console_text, end='')
 
 def reconnect_and_land():
     start_time = time.time()
@@ -309,20 +235,35 @@ def connection_failed_link_error(link_uri, msg):
 def log_batt_callback(timestamp, data, logconf):
     global batt_level, batt_state, t_start
     print(f"[{time.time() - t_start:.2f}s] Batt. level: {data['pm.vbat']:0.2f}V, " + \
-          f"state: {data['pm.state']}, " + \
-          f"target: {data['posCtl.targetX']:0.2f}, " + \
-          f"locSrv: {data['locSrv.x']:0.2f}, " + \
-          f"stateEstimate: {data['stateEstimate.x']:0.2f}")
+        #   f"target x: {data['posCtl.targetX']:0.2f}, " + \
+        #   f"target y: {data['posCtl.targetY']:0.2f}, " + \
+        # f"front range: {data['range.front']:0.2f}, " + \
+        f"oa.dirAxis: {data['oa.dirAxis']:d}, " + \
+        f"oa.dirSign: {data['oa.dirSign']:d}, " + \
+        f"oa.mode: {data['oa.mode']:d}, " + \
+        #   f"target: {data['posCtl.targetZ']:0.2f}, " + \
+          f"stateEstimate x: {data['stateEstimate.x']:0.2f}, " + \
+          f"stateEstimate y: {data['stateEstimate.y']:0.2f}")
+        #   f"stateEstimate: {data['stateEstimate.z']:0.2f}")
     batt_level = data["pm.vbat"]
-    batt_state = data["pm.state"]
+    # batt_state = data["pm.state"]
 
 def add_logconfig(cf):
-    log_config = LogConfig(name='Battery', period_in_ms=2000)
+    log_config = LogConfig(name='Battery', period_in_ms=500)
     log_config.add_variable('pm.vbat', 'float')
-    log_config.add_variable('pm.state', 'int8_t')
-    log_config.add_variable('posCtl.targetX', 'float')
-    log_config.add_variable('locSrv.x', 'float')
+    # log_config.add_variable('posCtl.targetX', 'float')
+    # log_config.add_variable('posCtl.targetY', 'float')
+    # log_config.add_variable('range.front', 'float')
+    log_config.add_variable('oa.dirAxis', 'uint8_t')
+    log_config.add_variable('oa.dirSign', 'int8_t')
+    log_config.add_variable('oa.mode', 'uint8_t')
+
+    # log_config.add_variable('posCtl.targetY', 'float')
+    # log_config.add_variable('posCtl.targetZ', 'float')
+    # log_config.add_variable('locSrv.x', 'float')
     log_config.add_variable('stateEstimate.x', 'float')
+    log_config.add_variable('stateEstimate.y', 'float')
+    # log_config.add_variable('stateEstimate.z', 'float')
     log_config.data_received_cb.add_callback(log_batt_callback)
     cf.log.add_config(log_config)
     log_config.start()
@@ -336,27 +277,29 @@ if __name__ == '__main__':
     print("initializing drivers")
     cflib.crtp.init_drivers()
 
-    print("Initializing MocapWrapper")
-    # Connect to the mocap system
-    mocap_wrapper = MocapWrapper(rigid_body_name)
+    # print("Initializing MocapWrapper")
+    # # Connect to the mocap system
+    # mocap_wrapper = MocapWrapper(rigid_body_name)
 
     print("Connect to the Crazyflie")
     with SyncCrazyflie(uri, cf=Crazyflie(rw_cache='./cache')) as scf:
         cf = scf.cf
 
         cf.connection_lost.add_callback(connection_failed_link_error)
+        cf.console.receivedChar.add_callback(_console_incoming)
         
         log_config = add_logconfig(cf)
 
         # Set up a callback to handle data from the mocap system
-        mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
+        # mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
 
         # adjust_orientation_sensitivity(cf)
-        print("Activating the kalman estimator")
-        activate_kalman_estimator(cf)
+        # print("Activating the kalman estimator")
+        # activate_kalman_estimator(cf)
+        # reset_estimator(cf)
+
         reset_estimator(cf)
+
         run_sequence(cf)
         time.sleep(1.0)
         stop_logconfig(log_config)
-
-    mocap_wrapper.close()

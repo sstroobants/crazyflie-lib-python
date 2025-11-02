@@ -43,6 +43,9 @@ def set_snn_I_gain(cf, gain):
     cf.param.set_value('pid_rate.snnIGain', str(gain))
     time.sleep(0.1)
 
+def set_snn_type(cf):
+    cf.param.set_value('pid_rate.snnType', '4')
+
 def start_onboard_logging(cf):
     cf.param.set_value("usd.logging", "1")
     time.sleep(0.05)

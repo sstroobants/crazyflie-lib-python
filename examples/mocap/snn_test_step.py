@@ -66,7 +66,7 @@ def run_sequence(cf):
 
     # Starting position
     x = 0
-    y = 0
+    y = -2
     z = 1
     yaw = 0
 
@@ -74,7 +74,7 @@ def run_sequence(cf):
     deactivate_snn_controller(cf)
     start_onboard_logging(cf)
     t_start = time.time()
-    commander.takeoff(1.0, 2.0)
+    commander.takeoff(z, 2.0)
     time.sleep(2.5)
     commander.go_to(x, y, z, yaw, 1)
     time.sleep(1.0)
@@ -86,7 +86,7 @@ def run_sequence(cf):
         time.sleep(0.1)
     time.sleep(5.0)
     print("Setpoint change")
-    commander.go_to(x + 1, y, z, yaw, 2)
+    commander.go_to(x, y + 2, z, yaw, 2)
     time.sleep(7.0)
     # time.sleep(20.0)
     

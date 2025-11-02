@@ -42,6 +42,11 @@ from cflib.crazyflie.mem import Poly4D
 from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.crazyflie.syncLogger import SyncLogger
 from cflib.utils import uri_helper
+import csv
+import os
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
 
 # URI to the Crazyflie to connect to
 uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E700')
@@ -55,7 +60,7 @@ host_name = '192.168.209.81'
 mocap_system_type = 'optitrack'
 
 # The name of the rigid body that represents the Crazyflie
-rigid_body_name = 'FlapperBody'
+rigid_body_name = 'cf'
 
 # True: send position and orientation; False: send position only
 send_full_pose = True
@@ -64,18 +69,32 @@ send_full_pose = True
 # degrees. If this is a problem, increase orientation_std_dev a bit. The default value in the firmware is 4.5e-3.
 orientation_std_dev = 4.5e-3
 
-# The trajectory to fly
-# See https://github.com/whoenig/uav_trajectories for a tool to generate
-# trajectories
-
-snn_control = False
 
 # battery variables
 batt_level = 0
 batt_state = 0
 
+# audio variables
+audio_db = 0
+audio_timestamp = 0
+last_audio_timestamp = 0
+
+# estimated position variables
+x_est = 2
+y_est = -2
+
 # time variables
 t_start = 0
+
+# Find the next available file index
+i = 0
+while os.path.exists(f'data/audio_data_{i}.csv'):
+    i += 1
+audio_file = f'data/audio_data_{i}.csv'
+
+# Ensure the data directory exists
+os.makedirs('data', exist_ok=True)
+
 
 
 class ConnectionLostError(Exception):
@@ -106,13 +125,31 @@ class MocapWrapper(Thread):
                     if self.on_pose:
                         pos = obj.position
 
-                        # print(f"Position: ({-pos[1]}, {pos[0]}, {pos[2]})")     
+                        # print(f"Position: ({pos[0] + 5}, {-pos[2] - 5}, {pos[1]})")     
                         # rotation = {"w": obj.rotation.w, "x": -obj.rotation.y, "y": obj.rotation.x, "z": obj.rotation.z}
                         # rotation = [obj.rotation.w, obj.rotation.y, -obj.rotation.x, obj.rotation.z]
                         # 0 = y, 1 = -x, 2 = z
                         self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
             # print(3)
+    
 
+def send_extpose_quat(cf, x, y, z, quat):
+    """
+    Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
+    This is going to be forwarded to the Crazyflie's position estimator.
+    """
+
+    # Shift the coordinates to match the cyberzoo coordinate system with 0,0 in front left
+    x = x + 5.0
+    z = z + 5.0
+
+    if send_full_pose:
+        cf.extpos.send_extpose(x, -z, y, quat.x, -quat.z, quat.y, quat.w)
+        # cf.extpos.send_extpose(-y, x, z, -quat.y, quat.x, quat.z, quat.w)
+    else:
+        cf.extpos.send_extpos(x, -z, y)
+        # print(-y, x, z)
+        # cf.extpos.send_extpos(-y, x, z)
 
 def wait_for_position_estimator(scf):
     print('Waiting for estimator to find position...')
@@ -154,28 +191,10 @@ def wait_for_position_estimator(scf):
                     max_z - min_z) < threshold:
                 break
 
-
-def send_extpose_quat(cf, x, y, z, quat):
-    """
-    Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
-    This is going to be forwarded to the Crazyflie's position estimator.
-    """
-    if send_full_pose:
-        cf.extpos.send_extpose(z, x, y, quat.z, quat.x, quat.y, quat.w)
-        # cf.extpos.send_extpose(-y, x, z, -quat.y, quat.x, quat.z, quat.w)
-    else:
-        cf.extpos.send_extpos(z, x, y)
-        # print(-y, x, z)
-        # cf.extpos.send_extpos(-y, x, z)
-
 def reset_estimator(cf):
     cf.param.set_value('kalman.resetEstimation', '1')
     time.sleep(0.1)
     cf.param.set_value('kalman.resetEstimation', '0')
-
-    # time.sleep(1)
-    wait_for_position_estimator(cf)
-
 
 def adjust_orientation_sensitivity(cf):
     cf.param.set_value('locSrv.extQuatStdDev', orientation_std_dev)
@@ -187,18 +206,6 @@ def activate_kalman_estimator(cf):
     # kalman filter. The default value seems to be a bit too low.
     cf.param.set_value('locSrv.extQuatStdDev', 0.06)
 
-def activate_snn_controller(cf):
-    cf.param.set_value('pid_rate.snnEn', '1')
-
-def deactivate_snn_controller(cf):
-    cf.param.set_value('pid_rate.snnEn', '0')
-
-def set_snn_type(cf):
-    cf.param.set_value('pid_rate.snnType', '4')
-
-def set_snn_I_gain(cf, gain):
-    cf.param.set_value('pid_rate.snnIGain', str(gain))
-
 def start_onboard_logging(cf):
     cf.param.set_value("usd.logging", "1")
 
@@ -206,7 +213,7 @@ def stop_onboard_logging(cf):
     cf.param.set_value("usd.logging", "0")
 
 def get_battery_level(cf):
-    log_config = LogConfig(name='Battery', period_in_ms=500)
+    log_config = LogConfig(name='Battery', period_in_ms=5000)
     log_config.add_variable('pm.vbat', 'float')
     with SyncLogger(cf, log_config) as logger:
         for log_entry in logger:
@@ -223,68 +230,87 @@ def get_battery_state(cf):
             data = log_entry[1]
             return data["pm.state"]
 
+def arm_fly_land(cf, x, y, z, yaw):
+    global x_est, y_est, audio_db, audio_timestamp, last_audio_timestamp
+    commander = cf.high_level_commander
 
-def upload_trajectory(cf, trajectory_id, trajectory):
-    trajectory_mem = cf.mem.get_mems(MemoryElement.TYPE_TRAJ)[0]
-    trajectory_mem.trajectory = []
+    # Calculate reasonable time to reach target
+    airspeed = 0.65
+    distance =  ((x - x_est)**2 + (y - y_est)**2)**0.5
+    time_to_target = max(1.5, distance / airspeed) # at least 
+    print(f"Distance to target: {distance:0.2f} m, time to target: {time_to_target:0.2f} s")
 
-    total_duration = 0
-    for row in trajectory:
-        duration = row[0]
-        x = Poly4D.Poly(row[1:9])
-        y = Poly4D.Poly(row[9:17])
-        z = Poly4D.Poly(row[17:25])
-        yaw = Poly4D.Poly(row[25:33])
-        trajectory_mem.trajectory.append(Poly4D(duration, x, y, z, yaw))
-        total_duration += duration
+    print("Arming")
+    cf.platform.send_arming_request(True)
+    time.sleep(1.0)
+    commander.takeoff(z, 1.0)
+    time.sleep(2.0)
+    commander.go_to(x, y, z, yaw, time_to_target)
+    time.sleep(time_to_target + 0.5)
 
-    trajectory_mem.write_data_sync()
-    cf.high_level_commander.define_trajectory(trajectory_id, 0, len(trajectory_mem.trajectory))
-    return total_duration
+    commander.go_to(x, y, 0.05, yaw, 1.2)
+    time.sleep(1.8)
+    commander.land(0.0, 0.5)
+    time.sleep(1.5)
+    cf.platform.send_arming_request(False)
+    print("Disarmed")
 
+    while True:
+        if ((audio_db < 85) and (audio_timestamp - last_audio_timestamp > 9000)):
+            last_audio_timestamp = audio_timestamp
+            break
+        time.sleep(0.1)
+    print(f"Measurement at position x: {x_est:0.2f}, y: {y_est:0.2f} done.")
+    print(f"Audio data: {audio_db:0.2f} dB at timestamp {audio_timestamp:d}")
+    print(f"Battery level: {batt_level:0.2f}V")
+
+    with open(audio_file, 'a', newline='') as f:
+        writer = csv.writer(f)
+        # Write header if file is empty
+        if f.tell() == 0:
+            writer.writerow(['x', 'y', 'db'])
+        writer.writerow([x_est, y_est, audio_db])
 
 def run_sequence(cf):
-    global batt_level, batt_state, t_start
+    global batt_level, batt_state, t_start, audio_db, audio_timestamp, last_audio_timestamp, x_est, y_est
+
+    initial_measurement_positions = [
+        (2, -2),
+        (8, -6),
+        (4, -8)
+    ]
 
     # Starting position
-    x = 0
-    y = 0
-    z = 0.8
+    x = 2
+    y = -2
+    z = 0.6
     yaw = 0
 
     commander = cf.high_level_commander
-    # deactivate_snn_controller(cf)
-    start_onboard_logging(cf)
     t_start = time.time()
-    cf.platform.send_arming_request(True)
-    # set_snn_type(cf)
-    time.sleep(0.1)
-    commander.takeoff(z, 2.0)
-    time.sleep(3.0)
-    # activate_snn_controller(cf)
-    commander.go_to(x, y, z, yaw, 1)
-    time.sleep(2.0)
-    commander.go_to(x, y, z, yaw + 180, 4)
-    time.sleep(6.0)
-    commander.go_to(x, y, z, yaw, 4)
-    time.sleep(6.0)
-    commander.go_to(x, y, z, yaw + 180, 4)
-    time.sleep(6.0)
-    commander.go_to(x, y, z, yaw, 4)
-    time.sleep(6.0)
-    # print("Moving to x=1")
-    # commander.go_to(x + 1, y, z, yaw, 1)
-    # time.sleep(4)
-    
 
-    print("Landing")
-    # time.sleep(0.2)
-    # commander.go_to(x, y, z, yaw, 3)
-    # time.sleep(3)
-    commander.land(0.0, 2.0)
-    time.sleep(4)
-    stop_onboard_logging(cf)
-    commander.stop()
+    last_audio_timestamp = audio_timestamp
+
+    for pos in initial_measurement_positions:
+        x = pos[0]
+        y = pos[1]
+        print(f"Flying to position x: {x}, y: {y}, z: {z}")
+        arm_fly_land(cf, x, y, z, yaw)
+        # while True:
+        #     if ((audio_db < 85) and (audio_timestamp - last_audio_timestamp > 9000)):
+        #         last_audio_timestamp = audio_timestamp
+        #         break
+        #     time.sleep(0.1)
+        # print(f"Measurement at position x: {x_est:0.2f}, y: {y_est:0.2f} done.")
+        # print(f"Audio data: {audio_db:0.2f} dB at timestamp {audio_timestamp:d}")
+        # print(f"Battery level: {batt_level:0.2f}V")
+
+        # with open(audio_file, 'a', newline='') as f:
+        #     writer = csv.writer(f)
+        #     # Write header if file is empty
+        #     if f.tell() == 0:
+        #         writer.writerow(['x', 'y', 'db'])
+        #     writer.writerow([x_est, y_est, audio_db])
 
 def reconnect_and_land():
     start_time = time.time()
@@ -295,7 +321,7 @@ def reconnect_and_land():
             with SyncCrazyflie(uri, cf=Crazyflie(rw_cache='./cache')) as scf:
                 print("Recovered connection and stopping propellors")
                 cf = scf.cf
-                cf.high_level_commander.stop()
+                cf.high_level_commander.land(0.0, 2.0)
         except Exception as e:
             print("Connection failed: ", e)
             time.sleep(1)
@@ -307,22 +333,41 @@ def connection_failed_link_error(link_uri, msg):
 
 
 def log_batt_callback(timestamp, data, logconf):
-    global batt_level, batt_state, t_start
+    global batt_level, batt_state, t_start, audio_db, audio_timestamp, x_est, y_est
     print(f"[{time.time() - t_start:.2f}s] Batt. level: {data['pm.vbat']:0.2f}V, " + \
-          f"state: {data['pm.state']}, " + \
-          f"target: {data['posCtl.targetX']:0.2f}, " + \
-          f"locSrv: {data['locSrv.x']:0.2f}, " + \
-          f"stateEstimate: {data['stateEstimate.x']:0.2f}")
+    #         f"db: {data['teensy.audio_db']:0.2f}, " + \
+    #         f"db timestamp: {data['teensy.audio_timestamp']:d}, " + \
+    #     #   f"yaw: {data['stateEstimate.yaw']:0.2f}, " + \
+    #     #   f"target y: {data['posCtl.targetVY']:0.2f}, " + \
+    #     #   f"target: {data['posCtl.targetZ']:0.2f}, " + \
+    #     #   f"target z: {data['posCtl.targetZ']:0.2f}, " + \
+          f"est. y: {data['stateEstimate.y']:0.2f}, " + \
+    #     #   f"target x: {data['posCtl.targetX']:0.2f}, " + \
+          f"est. x: {data['stateEstimate.x']:0.2f}") # + \
+    #     #   f"stateEstimate y: {data['stateEstimate.y']:0.2f}")
+    #     #   f"stateEstimate: {data['stateEstimate.z']:0.2f}")
     batt_level = data["pm.vbat"]
-    batt_state = data["pm.state"]
+    # batt_state = data["pm.state"]
+    audio_db = data["teensy.audio_db"]
+    audio_timestamp = data["teensy.audio_timestamp"]
+    x_est = data["stateEstimate.x"]
+    y_est = data["stateEstimate.y"]
 
 def add_logconfig(cf):
-    log_config = LogConfig(name='Battery', period_in_ms=2000)
+    log_config = LogConfig(name='Battery', period_in_ms=1000)
     log_config.add_variable('pm.vbat', 'float')
-    log_config.add_variable('pm.state', 'int8_t')
-    log_config.add_variable('posCtl.targetX', 'float')
-    log_config.add_variable('locSrv.x', 'float')
+    log_config.add_variable('teensy.audio_db', 'float')
+    log_config.add_variable('teensy.audio_timestamp', 'uint32_t')
+    # log_config.add_variable('posCtl.targetX', 'float')
+    # log_config.add_variable('posCtl.targetZ', 'float')
+    # log_config.add_variable('posCtl.targetVY', 'float')
+    # log_config.add_variable('stateEstimate.yaw', 'float')
+    # log_config.add_variable('posCtl.targetZ', 'float')
+    # log_config.add_variable('locSrv.x', 'float')
     log_config.add_variable('stateEstimate.x', 'float')
+    log_config.add_variable('stateEstimate.y', 'float')
+    # log_config.add_variable('stateEstimate.vy', 'float')
+    # log_config.add_variable('stateEstimate.z', 'float')
     log_config.data_received_cb.add_callback(log_batt_callback)
     cf.log.add_config(log_config)
     log_config.start()
@@ -346,17 +391,50 @@ if __name__ == '__main__':
 
         cf.connection_lost.add_callback(connection_failed_link_error)
         
+
         log_config = add_logconfig(cf)
 
         # Set up a callback to handle data from the mocap system
         mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
 
-        # adjust_orientation_sensitivity(cf)
-        print("Activating the kalman estimator")
-        activate_kalman_estimator(cf)
         reset_estimator(cf)
-        run_sequence(cf)
-        time.sleep(1.0)
-        stop_logconfig(log_config)
+        wait_for_position_estimator(cf)
 
+        # adjust_orientation_sensitivity(cf)
+        # print("Activating the kalman estimator")
+        # activate_kalman_estimator(cf)
+        run_sequence(cf)
+
+
+        for i in range(8):
+            print("Finished sequence, fitting and flying to estimated source location")
+            time.sleep(1)
+            data = pd.read_csv(audio_file, skipinitialspace=True)
+
+            x = data["x"].values
+            y = data["y"].values
+            L = data["db"].values
+
+            def residuals(params):
+                xs, ys, L0 = params
+                r = np.sqrt((x - xs)**2 + (y - ys)**2)
+                # avoid log(0)
+                r = np.clip(r, 1e-3, None)
+                pred = L0 - 20*np.log10(r)
+                return L - pred  # residuals in dB
+
+            # initial guess (e.g. center of your measurement area)
+            x0 = np.mean(x)
+            y0 = np.mean(y)
+            L0_guess = np.max(L)
+            res = least_squares(residuals, [x0, y0, L0_guess])
+
+            xs, ys, L0_fit = res.x
+            print(f"Estimated source: x={xs:.2f}, y={ys:.2f}, L0≈{L0_fit:.1f} dB at 1 m")
+            print("RMS residual:", np.sqrt(np.mean(res.fun**2)), "dB")
+
+            arm_fly_land(cf, xs, ys, 0.6, 0)
+
+        stop_logconfig(log_config)
     mocap_wrapper.close()
+
