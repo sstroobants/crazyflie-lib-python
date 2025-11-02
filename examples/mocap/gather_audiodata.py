@@ -51,14 +51,6 @@ from scipy.optimize import least_squares
 # URI to the Crazyflie to connect to
 uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E700')
 
-# True: send position and orientation; False: send position only
-send_full_pose = True
-
-# When using full pose, the estimator can be sensitive to noise in the orientation data when yaw is close to +/- 90
-# degrees. If this is a problem, increase orientation_std_dev a bit. The default value in the firmware is 4.5e-3.
-orientation_std_dev = 4.5e-3
-
-
 # battery variables
 batt_level = 0
 batt_state = 0
@@ -143,11 +135,6 @@ def reset_estimator(cf):
     # time.sleep(1)
     # wait_for_position_estimator(cf)
 
-
-def adjust_orientation_sensitivity(cf):
-    cf.param.set_value('locSrv.extQuatStdDev', orientation_std_dev)
-
-
 def activate_kalman_estimator(cf):
     cf.param.set_value('stabilizer.estimator', '2')
     # Set the std deviation for the quaternion data pushed into the
@@ -179,24 +166,6 @@ def get_battery_state(cf):
             return data["pm.state"]
 
 
-def upload_trajectory(cf, trajectory_id, trajectory):
-    trajectory_mem = cf.mem.get_mems(MemoryElement.TYPE_TRAJ)[0]
-    trajectory_mem.trajectory = []
-
-    total_duration = 0
-    for row in trajectory:
-        duration = row[0]
-        x = Poly4D.Poly(row[1:9])
-        y = Poly4D.Poly(row[9:17])
-        z = Poly4D.Poly(row[17:25])
-        yaw = Poly4D.Poly(row[25:33])
-        trajectory_mem.trajectory.append(Poly4D(duration, x, y, z, yaw))
-        total_duration += duration
-
-    trajectory_mem.write_data_sync()
-    cf.high_level_commander.define_trajectory(trajectory_id, 0, len(trajectory_mem.trajectory))
-    return total_duration
-
 def arm_fly_land(cf, x, y, z, yaw):
     global x_est, y_est, audio_db, audio_timestamp, last_audio_timestamp, visited_locations
     commander = cf.high_level_commander
@@ -207,13 +176,23 @@ def arm_fly_land(cf, x, y, z, yaw):
     time_to_target = max(1.5, distance / airspeed) # at least 
     print(f"Distance to target: {distance:0.2f} m, time to target: {time_to_target:0.2f} s")
 
+    # Calculate yaw to fly towards target
+    yaw = np.arctan2(y - y_est, x - x_est)
+    print(f"Calculated yaw: {yaw:0.2f} rad")
+
     print("Arming")
     cf.platform.send_arming_request(True)
     time.sleep(1.0)
     commander.takeoff(z, 1.0)
     time.sleep(2.0)
+    commander.go_to(x_est, y_est, z, yaw, 1.5) # go to current estimated position, with target yaw first IS THIS NECESSARY?
+    time.sleep(1.5)
     commander.go_to(x, y, z, yaw, time_to_target)
-    time.sleep(time_to_target + 3.0) # go to target and also get 3 seconds extra for potential obstacles
+    time.sleep(time_to_target) # should take at least this long
+
+    while abs(x_est - x) > 0.1 or abs(y_est - y) > 0.1: # if we are further than 10 cm from target, wait
+        print(f"Waiting to reach target position x: {x}, y: {y}. Current estimated position x: {x_est:0.2f}, y: {y_est:0.2f}")
+        time.sleep(0.5)
 
     commander.go_to(x, y, 0.05, yaw, 1.2)
     time.sleep(1.8)
@@ -286,7 +265,6 @@ def _console_incoming(console_text):
 def connection_failed_link_error(link_uri, msg):
     print(f"Connection to {link_uri} failed: {msg}")
     reconnect_and_land()
-
 
 
 def log_batt_callback(timestamp, data, logconf):
