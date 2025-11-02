@@ -201,7 +201,10 @@ def arm_fly_land(cf, x, y, z, yaw):
     cf.platform.send_arming_request(False)
     print("Disarmed")
 
+
     while True:
+        # Only accept new measurement if audio level is below threshold and at least 9 seconds have passed since last measurement
+        # This is to avoid the measurements taken during flight (high prop noise). This is probably a tuning parameter
         if ((audio_db < 85) and (audio_timestamp - last_audio_timestamp > 9000)):
             last_audio_timestamp = audio_timestamp
             break
@@ -223,8 +226,8 @@ def run_sequence(cf):
 
     initial_measurement_positions = [
         (2, -2),
-        (8, -6),
-        (4, -8)
+        (6, -4),
+        (4, -5)
     ]
 
     # Starting position
@@ -335,58 +338,58 @@ if __name__ == '__main__':
         run_sequence(cf)
 
 
-        for i in range(8):
-            print("\nFinished sequence, fitting and flying to estimated source location")
-            time.sleep(1)
-            data = pd.read_csv(audio_file, skipinitialspace=True)
+        # for i in range(8):
+        #     print("\nFinished sequence, fitting and flying to estimated source location")
+        #     time.sleep(1)
+        #     data = pd.read_csv(audio_file, skipinitialspace=True)
 
-            x = data["x"].values
-            y = data["y"].values
-            L = data["db"].values
+        #     x = data["x"].values
+        #     y = data["y"].values
+        #     L = data["db"].values
 
-            def residuals(params):
-                xs, ys, L0 = params
-                r = np.sqrt((x - xs)**2 + (y - ys)**2)
-                # avoid log(0)
-                r = np.clip(r, 1e-3, None)
-                pred = L0 - 20*np.log10(r)
-                return L - pred  # residuals in dB
+        #     def residuals(params):
+        #         xs, ys, L0 = params
+        #         r = np.sqrt((x - xs)**2 + (y - ys)**2)
+        #         # avoid log(0)
+        #         r = np.clip(r, 1e-3, None)
+        #         pred = L0 - 20*np.log10(r)
+        #         return L - pred  # residuals in dB
 
-            # initial guess (center of room with reasonable L0)
-            x0 = 5
-            y0 = -5
-            L0_guess = 78
-            res = least_squares(residuals, [x0, y0, L0_guess])
+        #     # initial guess (center of room with reasonable L0)
+        #     x0 = 5
+        #     y0 = -5
+        #     L0_guess = 78
+        #     res = least_squares(residuals, [x0, y0, L0_guess])
 
-            xs, ys, L0_fit = res.x
-            print(f"Estimated source: x={xs:.2f}, y={ys:.2f}, L0≈{L0_fit:.1f} dB at 1 m")
-            print(f"RMS residual: {np.sqrt(np.mean(res.fun**2)):.1f} dB")
+        #     xs, ys, L0_fit = res.x
+        #     print(f"Estimated source: x={xs:.2f}, y={ys:.2f}, L0≈{L0_fit:.1f} dB at 1 m")
+        #     print(f"RMS residual: {np.sqrt(np.mean(res.fun**2)):.1f} dB")
 
-            xs = np.clip(xs, 1.5, 8.5)
-            ys = np.clip(ys, -8.5, -2.5)
-            print(f"Clamped estimated source: x={xs:.2f}, y={ys:.2f}\n")
+        #     xs = np.clip(xs, 1.5, 8.5)
+        #     ys = np.clip(ys, -8.5, -2.5)
+        #     print(f"Clamped estimated source: x={xs:.2f}, y={ys:.2f}\n")
 
-            # Find a new location near the estimate that is least visited
-            min_dist_threshold = 1.0  # meters
-            is_too_close = any(np.sqrt((xs - vx)**2 + (ys - vy)**2) < min_dist_threshold for vx, vy in visited_locations)
+        #     # Find a new location near the estimate that is least visited
+        #     min_dist_threshold = 1.0  # meters
+        #     is_too_close = any(np.sqrt((xs - vx)**2 + (ys - vy)**2) < min_dist_threshold for vx, vy in visited_locations)
 
-            # if too close, go in direction of estimate but at min_dist_threshold distance
-            if is_too_close:
-                print("Estimated location too close to previous measurements, adjusting target location.")
-                direction_x = xs - x_est
-                direction_y = ys - y_est
-                norm = np.sqrt(direction_x**2 + direction_y**2)
-                if norm > 0:
-                    direction_x /= norm
-                    direction_y /= norm
-                    xs = x_est + direction_x * min_dist_threshold
-                    ys = y_est + direction_y * min_dist_threshold
+        #     # if too close, go in direction of estimate but at min_dist_threshold distance
+        #     if is_too_close:
+        #         print("Estimated location too close to previous measurements, adjusting target location.")
+        #         direction_x = xs - x_est
+        #         direction_y = ys - y_est
+        #         norm = np.sqrt(direction_x**2 + direction_y**2)
+        #         if norm > 0:
+        #             direction_x /= norm
+        #             direction_y /= norm
+        #             xs = x_est + direction_x * min_dist_threshold
+        #             ys = y_est + direction_y * min_dist_threshold
 
-                # Clamp to flight area
-                xs = np.clip(xs, 1.5, 8.5)
-                ys = np.clip(ys, -8.5, -2.5)
-                print(f"Adjusted target location: x={xs:.2f}, y={ys:.2f}\n")
+        #         # Clamp to flight area
+        #         xs = np.clip(xs, 1.5, 8.5)
+        #         ys = np.clip(ys, -8.5, -2.5)
+        #         print(f"Adjusted target location: x={xs:.2f}, y={ys:.2f}\n")
             
-            arm_fly_land(cf, xs, ys, 0.6, 0)
+        #     arm_fly_land(cf, xs, ys, 0.6, 0)
 
         stop_logconfig(log_config)

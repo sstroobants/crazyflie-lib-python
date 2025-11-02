@@ -172,33 +172,21 @@ def run_sequence(cf):
     global batt_level, batt_state, t_start
 
     # Starting position
-    x = 2
-    y = -2
+    x = 0
+    y = 0
     z = 0.7
     yaw = 0
 
     commander = cf.high_level_commander
     t_start = time.time()
     cf.platform.send_arming_request(True)
-    # set_snn_type(cf)
+
+    start_onboard_logging(cf)
     time.sleep(1.0)
     commander.takeoff(z, 1.0)
     time.sleep(5.0)
     commander.go_to(x, y, z, yaw, 1)
     time.sleep(3.0)
-    # print("Moving to x=1")
-    commander.go_to(x + 3, y, z, yaw, 10)
-    time.sleep(10.5)
-
-    commander.go_to(x + 3, y, z, yaw + 3.14, 1)
-    time.sleep(1.2)
-
-    commander.go_to(x, y, z, yaw + 3.14, 10)
-    time.sleep(10.5)
-
-    commander.go_to(x, y, z, yaw, 1)
-    time.sleep(1.2)
-    
 
     print("Landing")
     time.sleep(0.2)
@@ -207,6 +195,7 @@ def run_sequence(cf):
     commander.land(0.0, 0.5)
     time.sleep(1.5)
     cf.platform.send_arming_request(False)
+    stop_onboard_logging(cf)
     commander.stop()
 
 def _console_incoming(console_text):
