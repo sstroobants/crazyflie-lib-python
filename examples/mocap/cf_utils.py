@@ -73,6 +73,13 @@ def upload_trajectory(cf, trajectory_id, trajectory):
     cf.high_level_commander.define_trajectory(trajectory_id, 0, len(trajectory_mem.trajectory))
     return total_duration
 
+def console_incoming(console_text):
+    print(console_text, end='')
+
+def connection_failed_link_error(link_uri, msg):
+    print(f"Connection to {link_uri} failed: {msg}")
+    reconnect_and_land()
+
 
 def wait_for_position_estimator(scf):
     print('Waiting for estimator to find position...')
@@ -81,6 +88,10 @@ def wait_for_position_estimator(scf):
     log_config.add_variable('kalman.varPX', 'float')
     log_config.add_variable('kalman.varPY', 'float')
     log_config.add_variable('kalman.varPZ', 'float')
+
+    log_config.add_variable('kalman.stateX', 'float')
+    log_config.add_variable('kalman.stateY', 'float')
+    log_config.add_variable('kalman.stateZ', 'float')
 
     var_y_history = [1000] * 10
     var_x_history = [1000] * 10
@@ -106,13 +117,13 @@ def wait_for_position_estimator(scf):
             min_z = min(var_z_history)
             max_z = max(var_z_history)
 
-            # print("{} {} {}".
-            #       format(max_x - min_x, max_y - min_y, max_z - min_z))
+            print("{} {} {}".
+                  format(max_x - min_x, max_y - min_y, max_z - min_z))
+            print(f"x: {data['kalman.stateX']}, y: {data['kalman.stateY']}, z: {data['kalman.stateZ']}")
 
             if (max_x - min_x) < threshold and (
                     max_y - min_y) < threshold and (
                     max_z - min_z) < threshold:
-                print("Kalman filter converged.")
                 break
 
 def reset_estimator(cf):
@@ -120,8 +131,6 @@ def reset_estimator(cf):
     time.sleep(0.1)
     cf.param.set_value('kalman.resetEstimation', '0')
     time.sleep(0.1)
-
-    wait_for_position_estimator(cf)
 
 def send_extpose_quat(cf, x, y, z, quat):
     """
