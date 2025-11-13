@@ -52,6 +52,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
+send_anchors = False
+
 # URI to the Crazyflie to connect to
 uri_00 = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E700')
 uri_01 = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E701')
@@ -174,7 +176,7 @@ def gather_audio_data(cf, x, y, z, yaw, do_yaw=True):
         pass
 
     
-def update_location_marker():
+def update_location_marker(offset=0.0):
     global x_est, y_est, location_marker
     # Create/update a single black cross for the estimated source
     try:
@@ -183,9 +185,24 @@ def update_location_marker():
                 [], [], marker='x', color='black', markersize=12,
                 mew=3, linestyle='None', zorder=5
             )
-        location_marker.set_data([y_est], [x_est])
+        location_marker.set_data([y_est + offset], [x_est])
         plt.draw()
-        plt.pause(0.001)
+        plt.pause(0.01)
+    except Exception:
+        pass
+
+def update_estimation_marker(xs, ys):
+    global estimation_marker
+    # Create/update a single black cross for the estimated source
+    try:
+        if estimation_marker is None:
+            (estimation_marker,) = ax.plot(
+                [], [], marker='x', color='black', markersize=12,
+                mew=3, linestyle='None', zorder=5
+            )
+        estimation_marker.set_data([ys], [xs])
+        plt.draw()
+        plt.pause(0.01)
     except Exception:
         pass
 
@@ -197,9 +214,10 @@ def arm_fly_land(cf, x, y, z, yaw):
     airspeed = 0.5
     distance =  ((x - x_est)**2 + (y - y_est)**2)**0.5
     time_to_target = max(1.5, distance / airspeed) # at least 1.5 seconds
+    print(f"Target: {x}, {y}")
     print(f"Distance to target: {distance:0.2f} m, time to target: {time_to_target:0.2f} s")
 
-    # print("Arming")
+    print("Arming")
     cf.platform.send_arming_request(True)
     time.sleep(1.0)
     commander.takeoff(z, 1.0)
@@ -208,7 +226,10 @@ def arm_fly_land(cf, x, y, z, yaw):
     time.sleep(1.5)
     update_location_marker()
     commander.go_to(x, y, z, yaw, time_to_target)
-    time.sleep(time_to_target) # should take at least this long
+    for _ in range(int(time_to_target)):
+        time.sleep(1)
+        update_location_marker()
+    time.sleep(time_to_target % 1)
     update_location_marker()
 
     wait_counter = 0
@@ -238,9 +259,14 @@ def run_sequence(cf):
 
     initial_measurement_positions = [
         (2, -1),
-        (5.2, -1),
-        (6.2, -5.5),
-        (2.2, -5.5)
+        (5.4, -1.2),
+        (6.8, -3.8),
+        (8, -6),
+        (7, -8),
+        (5.2, -7.5),
+        (4.0, -6.0),
+        (2.5, -8.0),
+        (2.0, -7.0)
     ]
 
     # Starting position
@@ -261,9 +287,61 @@ def run_sequence(cf):
         print(f"Flying to position x: {x}, y: {y}, z: {z}")
         if n == 0:
             gather_audio_data(cf, x, y, z, yaw, do_yaw=False)
-            n += 1
         else:
             gather_audio_data(cf, x, y, z, yaw, do_yaw=True)
+        n += 1
+
+        if n > 2:
+            print(f"\nFinished {n} measurements, fitting and proceeding")
+            time.sleep(0.1)
+            data = pd.read_csv(audio_file, skipinitialspace=True)
+
+            x = data["x"].values
+            y = data["y"].values
+            L = data["db"].values
+
+            def residuals(params):
+                xs, ys, L0 = params
+                r = np.sqrt((x - xs)**2 + (y - ys)**2)
+                # avoid log(0)
+                r = np.clip(r, 1e-3, None)
+                pred = L0 - 20*np.log10(r)
+                return L - pred  # residuals in dB
+
+            # initial guess (center of room with reasonable L0)
+            x0 = 5
+            y0 = -5
+            L0_guess = 78
+            res = least_squares(residuals, [x0, y0, L0_guess])
+
+            xs, ys, L0_fit = res.x
+
+            xs = np.clip(xs, 1, 9)
+            ys = np.clip(ys, -9, -1)
+
+            print(f"Estimated source: x={xs:.2f}, y={ys:.2f}, L0≈{L0_fit:.1f} dB at 1 m")
+            print(f"RMS residual: {np.sqrt(np.mean(res.fun**2)):.1f} dB")
+
+            # Create/update a single red cross for the estimated source
+            try:
+                if estimated_marker is None:
+                    (estimated_marker,) = ax.plot(
+                        [], [], marker='x', color='red', markersize=12,
+                        mew=3, linestyle='None', zorder=5
+                    )
+                estimated_marker.set_data([ys], [xs])
+                plt.draw()
+                plt.pause(0.01)
+            except Exception:
+                pass
+
+    # Land close to whiteboard to work as beacon
+    # arm_fly_land(cf, 7, -7, 0.6, yaw=0)
+    # Land at the landing platform
+    arm_fly_land(cf, 0.5, -7.4, 0.6, yaw=0)
+    cf.param.set_value('loco.isAnchor', '1')
+    
+    
 
 
 
@@ -287,6 +365,8 @@ def log_batt_callback(timestamp, data, logconf):
     audio_timestamp = data["teensy.audio_timestamp"]
     x_est = data["stateEstimate.x"]
     y_est = data["stateEstimate.y"]
+
+    update_location_marker(offset=np.random.uniform(-1.0, 1.0))
 
 def add_logconfig(cf):
     log_config = LogConfig(name='Battery', period_in_ms=1000)
@@ -317,17 +397,96 @@ def send_anchor(uri, x, y, z):
         cf = scf.cf
 
         cf.connection_lost.add_callback(connection_failed_link_error)
-        cf.console.receivedChar.add_callback(console_incoming)
+        # cf.console.receivedChar.add_callback(console_incoming)
 
 
         log_config = add_logconfig(cf)
 
+        # cf.param.set_value('loco.isAnchor', '1')
         arm_fly_land(cf, x, y, z, 0)
 
         stop_logconfig(log_config)
-
-
         print("Connect to the Crazyflie")
+
+        
+def send_package(uri, x, y, z):
+    global x_est, y_est, audio_db, audio_timestamp, last_audio_timestamp, visited_locations
+    with SyncCrazyflie(uri, cf=Crazyflie(rw_cache='./cache')) as scf:
+        cf = scf.cf
+
+        cf.connection_lost.add_callback(connection_failed_link_error)
+        # cf.console.receivedChar.add_callback(console_incoming)
+
+
+        log_config = add_logconfig(cf)
+
+        commander = cf.high_level_commander
+
+        cf.param.set_value('loco.isAnchor', '0')
+        time.sleep(0.2)
+
+        # Calculate reasonable time to reach target
+        airspeed = 0.5
+        distance =  ((x - x_est)**2 + (y - y_est)**2)**0.5
+        time_to_target = max(1.5, distance / airspeed) # at least 1.5 seconds
+        print(f"Distance to target: {distance:0.2f} m, time to target: {time_to_target:0.2f} s")
+
+        # print("Arming")
+        cf.platform.send_arming_request(True)
+        time.sleep(1.0)
+        commander.takeoff(z, 1.0)
+        time.sleep(2.0)
+        commander.go_to(x_est, y_est, z, 0.0, 1.5) # go to current estimated position, with target yaw first IS THIS NECESSARY?
+        time.sleep(1.5)
+        update_location_marker()
+
+        # Fly through free passage
+        commander.go_to(5.5, -1.0, z, 0.0, time_to_target)
+        for _ in range(int(time_to_target)):
+            time.sleep(1)
+            update_location_marker()
+        time.sleep(time_to_target % 1)
+        update_location_marker()
+
+        wait_counter = 0
+        while abs(x_est - 5.5) > 0.1 or abs(y_est - -1.0) > 0.1: # if we are further than 10 cm from target, wait
+            print(f"Waiting to reach target position x: {5.5}, y: {-1.0}. Current estimated position x: {x_est:0.2f}, y: {y_est:0.2f}")
+            time.sleep(0.5)
+            update_location_marker()
+            wait_counter += 1
+            if wait_counter > 6: # after 3 seconds, give up
+                print("Taking too long to reach target, proceeding to landing.")
+                break
+
+        distance =  ((x - x_est)**2 + (y - y_est)**2)**0.5
+        time_to_target = max(1.5, distance / airspeed) # at least 1.5 seconds
+        print(f"Distance to target: {distance:0.2f} m, time to target: {time_to_target:0.2f} s")
+        yaw = np.arctan2(y - y_est, x - x_est)
+        print(f"Calculated yaw: {yaw:0.2f} rad")
+
+        commander.go_to(x_est, y_est, z, yaw, 1.0)
+        time.sleep(1.0)
+        commander.go_to(x, y, z, yaw, time_to_target)
+        for _ in range(int(time_to_target)):
+            time.sleep(1)
+            update_location_marker()
+        time.sleep(time_to_target % 1)
+        update_location_marker()
+
+        
+        commander.go_to(x, y, z, yaw, 1.5) # rotate back to zero yaw
+        time.sleep(1.2)
+        update_location_marker()
+        commander.go_to(x, y, 0.07, 0.0, 1.2)
+        time.sleep(1.8)
+        update_location_marker()
+        commander.land(0.0, 0.5)
+        time.sleep(0.9)
+        update_location_marker()
+        cf.platform.send_arming_request(False)
+        print("Disarmed")
+
+        stop_logconfig(log_config)
 
 
 if __name__ == '__main__':
@@ -354,20 +513,25 @@ if __name__ == '__main__':
     plt.show(block=False)
     plt.pause(0.005)
 
+    update_location_marker()
+    update_estimation_marker(5, -5)
+
     print("initializing drivers")
     cflib.crtp.init_drivers()
 
     print("Connect to the Crazyflie")
 
-    send_anchor(uri_01, x=1.4, y=-5, z=0.6)
-    send_anchor(uri_02, x=7, y=-1, z=0.6)
+    if send_anchors:
+        send_anchor(uri_01, x=1.4, y=-5, z=0.6)
+        send_anchor(uri_02, x=7, y=-1, z=0.6)
+        time.sleep(20)
 
     print("Connect to the Crazyflie")
     with SyncCrazyflie(uri_00, cf=Crazyflie(rw_cache='./cache')) as scf:
         cf = scf.cf
 
         cf.connection_lost.add_callback(connection_failed_link_error)
-        cf.console.receivedChar.add_callback(console_incoming)
+        # cf.console.receivedChar.add_callback(console_incoming)
         
 
         log_config = add_logconfig(cf)
@@ -379,119 +543,48 @@ if __name__ == '__main__':
 
         run_sequence(cf)
 
-        for i in range(3):
-            print("\nFinished sequence, fitting and flying to estimated source location")
-            time.sleep(1)
-            data = pd.read_csv(audio_file, skipinitialspace=True)
-
-            x = data["x"].values
-            y = data["y"].values
-            L = data["db"].values
-
-            def residuals(params):
-                xs, ys, L0 = params
-                r = np.sqrt((x - xs)**2 + (y - ys)**2)
-                # avoid log(0)
-                r = np.clip(r, 1e-3, None)
-                pred = L0 - 20*np.log10(r)
-                return L - pred  # residuals in dB
-
-            # initial guess (center of room with reasonable L0)
-            x0 = 5
-            y0 = -5
-            L0_guess = 78
-            res = least_squares(residuals, [x0, y0, L0_guess])
-
-            xs, ys, L0_fit = res.x
-            print(f"Estimated source: x={xs:.2f}, y={ys:.2f}, L0≈{L0_fit:.1f} dB at 1 m")
-            print(f"RMS residual: {np.sqrt(np.mean(res.fun**2)):.1f} dB")
-
-            # Create/update a single red cross for the estimated source
-            try:
-                if estimated_marker is None:
-                    (estimated_marker,) = ax.plot(
-                        [], [], marker='x', color='red', markersize=12,
-                        mew=3, linestyle='None', zorder=5
-                    )
-                estimated_marker.set_data([ys], [xs])
-                plt.draw()
-                plt.pause(0.001)
-            except Exception:
-                pass
-
-            xs = np.clip(xs, 1.5, 8.5)
-            ys = np.clip(ys, -8.5, -2.5)
-
-            xs = 3
-            ys = -3
-
-            # if xs, ys in forbidden area, clamp to nearest edge + small margin
-            if point_in_rect((xs, ys), forbidden_area):
-                # Distances to the edges of the forbidden area
-                dist_to_upper_edge = rect_max(forbidden_area)[0] - xs
-                dist_to_right_edge = ys - rect_max(forbidden_area)[1]
-
-                # Find the minimum distance to an edge
-                distances = {
-                    'upper': dist_to_upper_edge,
-                    'right': dist_to_right_edge
-                }
-                
-                # Filter for positive distances (point is inside)
-                valid_distances = {k: v for k, v in distances.items() if v >= 0}
-
-                if valid_distances:
-                    nearest_edge = min(valid_distances, key=valid_distances.get)
-
-                    # Move the point just outside the nearest edge with a small margin
-                    if nearest_edge == 'upper':
-                        xs = rect_max(forbidden_area)[0] + 0.2
-                    elif nearest_edge == 'right':
-                        ys = rect_max(forbidden_area)[1] - 0.2
-                print(f"Estimated location in forbidden area, clamping to nearest edge: {xs:.2f}, {ys:.2f}")
-
-
-            # if trajectory passes through forbidden area, adjust to go around
-            for i in np.arange(0, 1, 0.05):
-                xi = x_est + i * (xs - x_est)
-                yi = y_est + i * (ys - y_est)
-                if point_in_rect((xi, yi), forbidden_area):
-                    # Adjust target to go around forbidden area
-                    if xi < rect_max(forbidden_area)[0]:
-                        xs = rect_max(forbidden_area)[0] + 0.2
-                    if yi > rect_max(forbidden_area)[1]:
-                        ys = rect_max(forbidden_area)[1] - 0.2
-                    else:
-                        ys = rect_max(forbidden_area)[1] - 0.2
-                    print(f"Trajectory to estimated location passes through forbidden area, adjusting target location: x={xs:.2f}, y={ys:.2f}")
-                    break
-
-
-
-            print(f"Clamped estimated source: x={xs:.2f}, y={ys:.2f}\n")
-
-
-            # Find a new location near the estimate that is least visited
-            min_dist_threshold = 1.0  # meters
-            is_too_close = any(np.sqrt((xs - vx)**2 + (ys - vy)**2) < min_dist_threshold for vx, vy in visited_locations)
-
-            # if too close, go in direction of estimate but at min_dist_threshold distance
-            if is_too_close:
-                print("Estimated location too close to previous measurements, adjusting target location.")
-                direction_x = xs - x_est
-                direction_y = ys - y_est
-                norm = np.sqrt(direction_x**2 + direction_y**2)
-                if norm > 0:
-                    direction_x /= norm
-                    direction_y /= norm
-                    xs = x_est + direction_x * min_dist_threshold
-                    ys = y_est + direction_y * min_dist_threshold
-
-                # Clamp to flight area
-                xs = np.clip(xs, 1.5, 8.5)
-                ys = np.clip(ys, -8.5, -2.5)
-                print(f"Adjusted target location: x={xs:.2f}, y={ys:.2f}\n")
-
-            gather_audio_data(cf, xs, ys, 0.6, 0)
-
         stop_logconfig(log_config)
+    
+    data = pd.read_csv(audio_file, skipinitialspace=True)
+
+    x = data["x"].values
+    y = data["y"].values
+    L = data["db"].values
+
+    def residuals(params):
+        xs, ys, L0 = params
+        r = np.sqrt((x - xs)**2 + (y - ys)**2)
+        # avoid log(0)
+        r = np.clip(r, 1e-3, None)
+        pred = L0 - 20*np.log10(r)
+        return L - pred  # residuals in dB
+
+    # initial guess (center of room with reasonable L0)
+    x0 = 5
+    y0 = -5
+    L0_guess = 78
+    res = least_squares(residuals, [x0, y0, L0_guess])
+
+    xs, ys, L0_fit = res.x
+    print(f"Estimated source: x={xs:.2f}, y={ys:.2f}, L0≈{L0_fit:.1f} dB at 1 m")
+    print(f"RMS residual: {np.sqrt(np.mean(res.fun**2)):.1f} dB")
+
+    # Create/update a single red cross for the estimated source
+    try:
+        if estimated_marker is None:
+            (estimated_marker,) = ax.plot(
+                [], [], marker='x', color='red', markersize=12,
+                mew=3, linestyle='None', zorder=5
+            )
+        estimated_marker.set_data([ys], [xs])
+        plt.draw()
+        plt.pause(0.01)
+    except Exception:
+        pass
+    
+    send_package(uri_03, x=5.2, y=-1.0, z=0.6)
+
+
+    plt.savefig("images/audio_data.png")
+    plt.close()
+    time.sleep(360)
