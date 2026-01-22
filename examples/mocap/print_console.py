@@ -32,8 +32,6 @@ import time
 from threading import Thread
 import random
 
-import motioncapture
-
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
 from cflib.crazyflie.log import LogConfig
@@ -46,7 +44,7 @@ from cflib.utils import uri_helper
 from cf_utils import *
 
 # URI to the Crazyflie to connect to
-uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E712')
+uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E702')
 
 # battery variables
 batt_level = 0
@@ -58,69 +56,6 @@ t_start = 0
 
 class ConnectionLostError(Exception):
     pass
-
-def reset_estimator(cf):
-    cf.param.set_value('kalman.resetEstimation', '1')
-    time.sleep(0.1)
-    cf.param.set_value('kalman.resetEstimation', '0')
-
-    # time.sleep(1)
-    wait_for_position_estimator(cf)
-
-
-def run_sequence(cf):
-    global batt_level, batt_state, t_start
-
-    # Starting position
-    x = 0
-    y = 0
-    z = 1.0
-    yaw = 0
-
-    commander = cf.high_level_commander
-    t_start = time.time()
-    cf.platform.send_arming_request(True)
-
-    start_onboard_logging(cf)
-    time.sleep(1.0)
-    commander.takeoff(z, 1.0)
-    time.sleep(5.0)
-    commander.go_to(x, y, z, yaw, 1)
-    time.sleep(3.0)
-
-    commander.go_to(x + 2, y, z, yaw, 8)
-    time.sleep(15)
-
-    commander.go_to(x, y, z, yaw, 8)
-    time.sleep(15)
-
-    print("Landing")
-    time.sleep(0.2)
-    commander.go_to(x, y, 0.05, yaw, 1.2)
-    time.sleep(1.8)
-    commander.land(0.0, 0.5)
-    time.sleep(1.5)
-    cf.platform.send_arming_request(False)
-    stop_onboard_logging(cf)
-    commander.stop()
-
-def reconnect_and_land():
-    start_time = time.time()
-    duration = 10
-    while time.time() - start_time < duration:
-        print("Try to reconnect")
-        try:
-            with SyncCrazyflie(uri, cf=Crazyflie(rw_cache='./cache')) as scf:
-                print("Recovered connection and stopping propellors")
-                cf = scf.cf
-                cf.high_level_commander.stop()
-        except Exception as e:
-            print("Connection failed: ", e)
-            time.sleep(1)
-
-def connection_failed_link_error(link_uri, msg):
-    print(f"Connection to {link_uri} failed: {msg}")
-    reconnect_and_land()
 
 
 
@@ -135,13 +70,13 @@ def log_batt_callback(timestamp, data, logconf):
         # f"oa.mode: {data['oa.mode']:d}, " + \
         #   f"target: {data['posCtl.targetZ']:0.2f}, " + \
           f"stateEstimate x: {data['stateEstimate.x']:0.2f}, " + \
-          f"stateEstimate y: {data['stateEstimate.y']:0.2f}")
-        #   f"stateEstimate: {data['stateEstimate.z']:0.2f}")
+          f"stateEstimate y: {data['stateEstimate.y']:0.2f}, " + \
+          f"stateEstimate: {data['stateEstimate.z']:0.2f}")
     batt_level = data["pm.vbat"]
     # batt_state = data["pm.state"]
 
 def add_logconfig(cf):
-    log_config = LogConfig(name='Battery', period_in_ms=500)
+    log_config = LogConfig(name='Battery', period_in_ms=2000)
     log_config.add_variable('pm.vbat', 'float')
     # log_config.add_variable('posCtl.targetX', 'float')
     # log_config.add_variable('posCtl.targetY', 'float')
@@ -155,7 +90,7 @@ def add_logconfig(cf):
     # log_config.add_variable('locSrv.x', 'float')
     log_config.add_variable('stateEstimate.x', 'float')
     log_config.add_variable('stateEstimate.y', 'float')
-    # log_config.add_variable('stateEstimate.z', 'float')
+    log_config.add_variable('stateEstimate.z', 'float')
     log_config.data_received_cb.add_callback(log_batt_callback)
     cf.log.add_config(log_config)
     log_config.start()
@@ -169,10 +104,6 @@ if __name__ == '__main__':
     print("initializing drivers")
     cflib.crtp.init_drivers()
 
-    # print("Initializing MocapWrapper")
-    # # Connect to the mocap system
-    # mocap_wrapper = MocapWrapper(rigid_body_name)
-
     print("Connect to the Crazyflie")
     with SyncCrazyflie(uri, cf=Crazyflie(rw_cache='./cache')) as scf:
         cf = scf.cf
@@ -182,16 +113,5 @@ if __name__ == '__main__':
         
         log_config = add_logconfig(cf)
 
-        # Set up a callback to handle data from the mocap system
-        # mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
-
-        # adjust_orientation_sensitivity(cf)
-        # print("Activating the kalman estimator")
-        # activate_kalman_estimator(cf)
-        # reset_estimator(cf)
-
-        reset_estimator(cf)
-
-        run_sequence(cf)
-        time.sleep(1.0)
-        stop_logconfig(log_config)
+        while True:
+            time.sleep(0.1)

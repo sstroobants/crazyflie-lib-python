@@ -67,6 +67,20 @@ def reset_estimator(cf):
     # time.sleep(1)
     wait_for_position_estimator(cf)
 
+def set_drag_params(cf, dx, dy, dz, r_dx, r_dy, r_dz):
+    cf.param.set_value('kalman.dragBx', dx)
+    time.sleep(0.05)
+    cf.param.set_value('kalman.dragBy', dy)
+    time.sleep(0.05)
+    cf.param.set_value('kalman.dragBz', dz)
+    time.sleep(0.05)
+    cf.param.set_value('kalman.drag_rx', r_dx)
+    time.sleep(0.05)
+    cf.param.set_value('kalman.drag_ry', r_dy)
+    time.sleep(0.05)
+    cf.param.set_value('kalman.drag_rz', r_dz)
+    time.sleep(0.05)
+    
 
 def run_sequence(cf):
     global batt_level, batt_state, t_start
@@ -74,7 +88,10 @@ def run_sequence(cf):
     # Starting position
     x = 0
     y = 0
-    z = 1.0
+
+    vx = 0.5
+    vy = -0.5
+    z = 0.8
     yaw = 0
 
     commander = cf.high_level_commander
@@ -83,23 +100,57 @@ def run_sequence(cf):
 
     start_onboard_logging(cf)
     time.sleep(1.0)
-    commander.takeoff(z, 1.0)
-    time.sleep(5.0)
-    commander.go_to(x, y, z, yaw, 1)
-    time.sleep(3.0)
+    # commander.takeoff(z, 1.0)
+    # time.sleep(4.0)
 
-    commander.go_to(x + 2, y, z, yaw, 8)
-    time.sleep(15)
+    for i in range(40):
+        cf.commander.send_hover_setpoint(0, 0, 0, z)
+        time.sleep(0.1)
 
-    commander.go_to(x, y, z, yaw, 8)
-    time.sleep(15)
+    for i in range(40):
+        cf.commander.send_hover_setpoint(vx, 0, 0, z)
+        time.sleep(0.1)
+
+    for i in range(20):
+        cf.commander.send_hover_setpoint(0, 0, 0, z)
+        time.sleep(0.1)
+
+    for i in range(40):
+        cf.commander.send_hover_setpoint(0, vy, 0, z)
+        time.sleep(0.1)
+
+    for i in range(20):
+        cf.commander.send_hover_setpoint(0, 0, 0, z)
+        time.sleep(0.1)
+
+    for i in range(40):
+        cf.commander.send_hover_setpoint(-vx, 0, 0, z)
+        time.sleep(0.1)
+
+    for i in range(20):
+        cf.commander.send_hover_setpoint(0, 0, 0, z)
+        time.sleep(0.1)
+    
+    for i in range(40):
+        cf.commander.send_hover_setpoint(0, -vy, 0, z)
+        time.sleep(0.1)
+    
+    for i in range(20):
+        cf.commander.send_hover_setpoint(0, 0, 0, z)
+        time.sleep(0.1)
+
+    cf.commander.send_notify_setpoint_stop(remain_valid_milliseconds=0)
+    # time.sleep(0.05)
 
     print("Landing")
-    time.sleep(0.2)
-    commander.go_to(x, y, 0.05, yaw, 1.2)
-    time.sleep(1.8)
-    commander.land(0.0, 0.5)
-    time.sleep(1.5)
+
+    # commander.land(0.0, 2.0)
+    # time.sleep(2.2)
+
+    # commander.go_to(x, y, 0.10, yaw, 1.5)
+    # time.sleep(1.8)
+    commander.land(0.03, 2.0)
+    time.sleep(2.0)
     cf.platform.send_arming_request(False)
     stop_onboard_logging(cf)
     commander.stop()
@@ -135,8 +186,8 @@ def log_batt_callback(timestamp, data, logconf):
         # f"oa.mode: {data['oa.mode']:d}, " + \
         #   f"target: {data['posCtl.targetZ']:0.2f}, " + \
           f"stateEstimate x: {data['stateEstimate.x']:0.2f}, " + \
-          f"stateEstimate y: {data['stateEstimate.y']:0.2f}")
-        #   f"stateEstimate: {data['stateEstimate.z']:0.2f}")
+          f"stateEstimate y: {data['stateEstimate.y']:0.2f}, " + \
+          f"stateEstimate: {data['stateEstimate.z']:0.2f}")
     batt_level = data["pm.vbat"]
     # batt_state = data["pm.state"]
 
@@ -155,7 +206,7 @@ def add_logconfig(cf):
     # log_config.add_variable('locSrv.x', 'float')
     log_config.add_variable('stateEstimate.x', 'float')
     log_config.add_variable('stateEstimate.y', 'float')
-    # log_config.add_variable('stateEstimate.z', 'float')
+    log_config.add_variable('stateEstimate.z', 'float')
     log_config.data_received_cb.add_callback(log_batt_callback)
     cf.log.add_config(log_config)
     log_config.start()
@@ -189,6 +240,8 @@ if __name__ == '__main__':
         # print("Activating the kalman estimator")
         # activate_kalman_estimator(cf)
         # reset_estimator(cf)
+
+        set_drag_params(cf, 4.2, 1.8, 0.3, 0.0, 0.0, 0.06)
 
         reset_estimator(cf)
 
