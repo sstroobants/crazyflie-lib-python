@@ -28,6 +28,7 @@ The script uses the high level commander to upload a trajectory to fly a figure 
 Set the uri to the radio settings of the Crazyflie and modify the
 mocap setting matching your system.
 """
+import math
 import time
 from threading import Thread
 
@@ -45,7 +46,7 @@ from cflib.utils import uri_helper
 from cf_utils import *
 
 # URI to the Crazyflie to connect to
-uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E704')
+uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E700')
 
 # The host name or ip address of the mocap system
 host_name = '192.168.209.81'
@@ -56,7 +57,7 @@ host_name = '192.168.209.81'
 mocap_system_type = 'optitrack'
 
 # The name of the rigid body that represents the Crazyflie
-rigid_body_name = 'cf'
+rigid_body_name = 'Flapper'
 
 # True: send position and orientation; False: send position only
 send_full_pose = True
@@ -68,6 +69,7 @@ orientation_std_dev = 4.5e-3
 # The trajectory to fly
 # See https://github.com/whoenig/uav_trajectories for a tool to generate
 # trajectories
+
 
 # battery variables
 batt_level = 0
@@ -125,7 +127,7 @@ def wait_for_position_estimator(scf):
     var_x_history = [1000] * 10
     var_z_history = [1000] * 10
 
-    threshold = 0.001
+    threshold = 0.005
 
     with SyncLogger(scf, log_config) as logger:
         for log_entry in logger:
@@ -230,27 +232,115 @@ def run_sequence(cf):
     # Starting position
     x = 0
     y = 0
-    z = 0.8
+    z = 0.6
     yaw = 0
 
     commander = cf.high_level_commander
+    # deactivate_snn_controller(cf)
     start_onboard_logging(cf)
     t_start = time.time()
     cf.platform.send_arming_request(True)
+    # set_snn_type(cf)
     time.sleep(0.1)
     commander.takeoff(z, 2.0)
     time.sleep(3.0)
-    commander.go_to(x, y, z, yaw, 1)
-    time.sleep(2.0)
-    commander.go_to(x, y, z, yaw + 180, 4)
-    time.sleep(6.0)
-    commander.go_to(x, y, z, yaw, 4)
-    time.sleep(6.0)
-    commander.go_to(x, y, z, yaw + 180, 4)
-    time.sleep(6.0)
-    commander.go_to(x, y, z, yaw, 4)
-    time.sleep(6.0)
+    # activate_snn_controller(cf)
+
+    # --- Up down maneuver (commented out) ---
+
+    # commander.go_to(x, y, z, yaw, 1)
+    # time.sleep(2.0)
+
+    # commander.go_to(x, y, z + 0.8, yaw, 2)
+    # time.sleep(2.5)
+
+    # commander.go_to(x, y, z, yaw, 2)
+    # time.sleep(2.5)
+
+    # commander.go_to(x, y, z + 1.2, yaw, 2)
+    # time.sleep(2.5)
+
     
+
+    # --- diagonal maneuver ---
+
+    # commander.go_to(x, y, z, yaw, 1)
+    # time.sleep(2.0)
+    # commander.go_to(x - 2.5, y + 2.5, z, -math.pi / 3.0, 4)
+    # time.sleep(5)
+    # commander.go_to(x + 2.5, y - 2.5, z, -math.pi / 3.0, 6)
+    # time.sleep(7)
+    # commander.go_to(x - 2.5, y + 2.5, z, -math.pi / 3.0, 6)
+    # time.sleep(7)
+    # commander.go_to(x + 2.5, y - 2.5, z, 0, 6)
+    # time.sleep(7)
+    # commander.go_to(x - 2.5, y + 2.5, z, 0, 6)
+    # time.sleep(7)
+
+
+
+    # --- square maneuver ---
+    commander.go_to(x, y - 1.5, z, 0, 4)
+    time.sleep(6.0)
+    commander.go_to(x + 1.5, y - 1.5, z, 0, 4)
+    time.sleep(6.0)
+    commander.go_to(x + 1.5, y + 1.5, z, 0, 4)
+    time.sleep(6.0)
+    commander.go_to(x - 1.5, y + 1.5, z, 0, 4)
+    time.sleep(6.0)
+    commander.go_to(x - 1.5, y - 1.5, z, 0, 4)
+    time.sleep(6.0)
+    commander.go_to(x, y - 1.5, z, yaw, 4)
+    time.sleep(6.0)
+    commander.go_to(x, y, z, yaw, 4)
+    time.sleep(8.0)
+
+
+    # commander.go_to(x, y - 3, z, yaw, 3)
+    # time.sleep(4)
+
+    # commander.go_to(x, y + 3, z, yaw, 6)
+    # time.sleep(7.0)
+
+    # commander.go_to(x, y - 3, z, yaw, 6)
+    # time.sleep(7.0)
+
+    # commander.go_to(x, y + 3, z, yaw, 6)
+    # time.sleep(7.0)
+
+
+
+    # commander.go_to(x, y, z, yaw, 4)
+    # time.sleep(8.0)
+
+    # --- Fly to x=-3, then sine wave forward along +x (amplitude in y) ---
+    # Step 1: fly to x=-3, facing +x (yaw=0)
+
+    # commander.go_to(x - 3, y, z, yaw, 4)
+    # time.sleep(6.0)
+
+    # # Step 2: sine wave along +x from x=-3 to x=+3, amplitude in y
+    # # y_wp = A*sin(2*pi*x_wp / L), yaw tracks direction of travel
+    # A = 1.0     # sine amplitude in y [m]
+    # L = 2.0     # wavelength [m] - one full period every 2 m forward
+    # step = 0.13 # distance between setpoints along x [m]
+    # num_steps = 42  # covers 6 m: x=-3 to x=+3
+
+    # prev_x_wp = float(x - 3)
+    # prev_y_wp = float(y)
+    # for i in range(1, num_steps + 1):
+    #     x_wp = (x - 3) + i * step
+    #     y_wp = y + A * math.sin(2 * math.pi * x_wp / L)
+    #     dx = x_wp - prev_x_wp
+    #     dy = y_wp - prev_y_wp
+    #     yaw_wp = math.atan2(dy, dx)
+    #     commander.go_to(x_wp, y_wp, z, yaw_wp, 1)
+    #     time.sleep(1.5)
+    #     prev_x_wp, prev_y_wp = x_wp, y_wp
+
+    # # Return to origin facing +x (yaw=0)
+    # commander.go_to(x, y, z, yaw, 6)
+    # time.sleep(8.0)
 
     print("Landing")
     # time.sleep(0.2)
@@ -320,6 +410,7 @@ if __name__ == '__main__':
         cf = scf.cf
 
         cf.connection_lost.add_callback(connection_failed_link_error)
+        cf.console.receivedChar.add_callback(console_incoming)
         
         log_config = add_logconfig(cf)
 

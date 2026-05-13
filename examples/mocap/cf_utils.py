@@ -97,7 +97,7 @@ def wait_for_position_estimator(scf):
     var_x_history = [1000] * 10
     var_z_history = [1000] * 10
 
-    threshold = 0.001
+    threshold = 0.05
 
     with SyncLogger(scf, log_config) as logger:
         for log_entry in logger:

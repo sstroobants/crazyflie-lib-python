@@ -70,6 +70,6 @@ class Console:
         Callback for data received from the copter.
         """
         # This might be done prettier ;-)
-        console_text = packet.data.decode('UTF-8')
+        console_text = packet.data.decode('UTF-8', errors='replace')
 
         self.receivedChar.call(console_text)

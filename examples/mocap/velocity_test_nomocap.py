@@ -46,7 +46,7 @@ from cflib.utils import uri_helper
 from cf_utils import *
 
 # URI to the Crazyflie to connect to
-uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E712')
+uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E701')
 
 # battery variables
 batt_level = 0
@@ -107,35 +107,43 @@ def run_sequence(cf):
         cf.commander.send_hover_setpoint(0, 0, 0, z)
         time.sleep(0.1)
 
-    for i in range(40):
-        cf.commander.send_hover_setpoint(vx, 0, 0, z)
+    for i in range(100):
+        cf.commander.send_hover_setpoint(vx, 0, 40, z)
         time.sleep(0.1)
 
-    for i in range(20):
-        cf.commander.send_hover_setpoint(0, 0, 0, z)
-        time.sleep(0.1)
+    # for i in range(80):
+    #     cf.commander.send_hover_setpoint(vx, 0, -40, z)
+    #     time.sleep(0.1)
 
-    for i in range(40):
-        cf.commander.send_hover_setpoint(0, vy, 0, z)
-        time.sleep(0.1)
+    # for i in range(40):
+    #     cf.commander.send_hover_setpoint(vx, 0, 0, z)
+    #     time.sleep(0.1)
 
-    for i in range(20):
-        cf.commander.send_hover_setpoint(0, 0, 0, z)
-        time.sleep(0.1)
+    # for i in range(40):
+    #     cf.commander.send_hover_setpoint(0, 0, 0, z)
+    #     time.sleep(0.1)
 
-    for i in range(40):
-        cf.commander.send_hover_setpoint(-vx, 0, 0, z)
-        time.sleep(0.1)
+    # for i in range(40):
+    #     cf.commander.send_hover_setpoint(0, vy, 0, z)
+    #     time.sleep(0.1)
 
-    for i in range(20):
-        cf.commander.send_hover_setpoint(0, 0, 0, z)
-        time.sleep(0.1)
+    # for i in range(40):
+    #     cf.commander.send_hover_setpoint(0, 0, 0, z)
+    #     time.sleep(0.1)
+
+    # for i in range(40):
+    #     cf.commander.send_hover_setpoint(-vx, 0, 0, z)
+    #     time.sleep(0.1)
+
+    # for i in range(40):
+    #     cf.commander.send_hover_setpoint(0, 0, 0, z)
+    #     time.sleep(0.1)
+    
+    # for i in range(40):
+    #     cf.commander.send_hover_setpoint(0, -vy, 0, z)
+    #     time.sleep(0.1)
     
     for i in range(40):
-        cf.commander.send_hover_setpoint(0, -vy, 0, z)
-        time.sleep(0.1)
-    
-    for i in range(20):
         cf.commander.send_hover_setpoint(0, 0, 0, z)
         time.sleep(0.1)
 
@@ -185,9 +193,11 @@ def log_batt_callback(timestamp, data, logconf):
         # f"oa.dirSign: {data['oa.dirSign']:d}, " + \
         # f"oa.mode: {data['oa.mode']:d}, " + \
         #   f"target: {data['posCtl.targetZ']:0.2f}, " + \
-          f"stateEstimate x: {data['stateEstimate.x']:0.2f}, " + \
-          f"stateEstimate y: {data['stateEstimate.y']:0.2f}, " + \
-          f"stateEstimate: {data['stateEstimate.z']:0.2f}")
+          f"x: {data['stateEstimate.x']:0.2f}, " + \
+          f"y: {data['stateEstimate.y']:0.2f}, " + \
+          f"yaw: {data['stateEstimate.yaw']:0.2f}, " + \
+          f"vx: {data['kalman.statePX']:0.2f}, " + \
+          f"vy: {data['kalman.statePY']:0.2f}")
     batt_level = data["pm.vbat"]
     # batt_state = data["pm.state"]
 
@@ -206,7 +216,10 @@ def add_logconfig(cf):
     # log_config.add_variable('locSrv.x', 'float')
     log_config.add_variable('stateEstimate.x', 'float')
     log_config.add_variable('stateEstimate.y', 'float')
-    log_config.add_variable('stateEstimate.z', 'float')
+    log_config.add_variable('kalman.statePX', 'float')
+    log_config.add_variable('kalman.statePY', 'float')
+    log_config.add_variable('stateEstimate.yaw', 'float')
+    # log_config.add_variable('stateEstimate.z', 'float')
     log_config.data_received_cb.add_callback(log_batt_callback)
     cf.log.add_config(log_config)
     log_config.start()
@@ -241,7 +254,7 @@ if __name__ == '__main__':
         # activate_kalman_estimator(cf)
         # reset_estimator(cf)
 
-        set_drag_params(cf, 4.2, 1.8, 0.3, 0.0, 0.0, 0.06)
+        # set_drag_params(cf, 4.2, 1.8, 0.3, 0.0, 0.0, 0.06)
 
         reset_estimator(cf)
 

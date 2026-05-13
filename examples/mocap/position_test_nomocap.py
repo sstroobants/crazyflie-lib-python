@@ -46,7 +46,7 @@ from cflib.utils import uri_helper
 from cf_utils import *
 
 # URI to the Crazyflie to connect to
-uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E712')
+uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E700')
 
 # battery variables
 batt_level = 0
@@ -74,7 +74,7 @@ def run_sequence(cf):
     # Starting position
     x = 0
     y = 0
-    z = 1.0
+    z = 0.6
     yaw = 0
 
     commander = cf.high_level_commander
@@ -84,15 +84,9 @@ def run_sequence(cf):
     start_onboard_logging(cf)
     time.sleep(1.0)
     commander.takeoff(z, 1.0)
-    time.sleep(5.0)
-    commander.go_to(x, y, z, yaw, 1)
-    time.sleep(3.0)
-
-    commander.go_to(x + 2, y, z, yaw, 8)
-    time.sleep(15)
-
-    commander.go_to(x, y, z, yaw, 8)
-    time.sleep(15)
+    time.sleep(6.0)
+    # commander.go_to(x, y, z, yaw, 1)
+    # time.sleep(3.0)
 
     print("Landing")
     time.sleep(0.2)
@@ -141,7 +135,7 @@ def log_batt_callback(timestamp, data, logconf):
     # batt_state = data["pm.state"]
 
 def add_logconfig(cf):
-    log_config = LogConfig(name='Battery', period_in_ms=500)
+    log_config = LogConfig(name='Battery', period_in_ms=5000)
     log_config.add_variable('pm.vbat', 'float')
     # log_config.add_variable('posCtl.targetX', 'float')
     # log_config.add_variable('posCtl.targetY', 'float')
@@ -180,7 +174,7 @@ if __name__ == '__main__':
         cf.connection_lost.add_callback(connection_failed_link_error)
         cf.console.receivedChar.add_callback(console_incoming)
         
-        log_config = add_logconfig(cf)
+        # log_config = add_logconfig(cf)
 
         # Set up a callback to handle data from the mocap system
         # mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
@@ -188,10 +182,9 @@ if __name__ == '__main__':
         # adjust_orientation_sensitivity(cf)
         # print("Activating the kalman estimator")
         # activate_kalman_estimator(cf)
-        # reset_estimator(cf)
 
         reset_estimator(cf)
 
         run_sequence(cf)
         time.sleep(1.0)
-        stop_logconfig(log_config)
+        # stop_logconfig(log_config)
